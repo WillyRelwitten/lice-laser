@@ -1,1 +1,491 @@
-PLACEHOLDER
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Lice Laser — Stingray Mode</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#051a1a;
+  color:#c8f0e8;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  overflow:hidden;
+  touch-action:none;
+  -webkit-user-select:none;
+  user-select:none;
+}
+#game {
+  display:block;
+  width:100vw;
+  height:100vh;
+  cursor:crosshair;
+  background:#0a2a2a;
+}
+#ui {
+  position:absolute;
+  top:0; left:0; right:0;
+  pointer-events:none;
+  padding:12px 16px;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  font-size:18px;
+  font-weight:600;
+  text-shadow:0 0 8px #000;
+}
+#left-ui { display:flex; flex-direction:column; gap:6px; }
+#health-bar {
+  width:160px; height:14px;
+  background:#1a3a3a;
+  border:2px solid #4af;
+  border-radius:7px;
+  overflow:hidden;
+}
+#health-fill {
+  height:100%;
+  width:100%;
+  background:linear-gradient(90deg,#0f8,#0af);
+  transition:width 0.2s;
+}
+#metal-btn, #restart-btn, #share-btn {
+  pointer-events:auto;
+  background:#1a3a3a;
+  border:2px solid #4af;
+  color:#c8f0e8;
+  padding:8px 14px;
+  border-radius:8px;
+  font-weight:700;
+  cursor:pointer;
+  font-size:15px;
+}
+#metal-btn.active {
+  background:#f40;
+  border-color:#ff8;
+  color:#fff;
+  box-shadow:0 0 12px #f40;
+}
+#overlay {
+  position:absolute;
+  inset:0;
+  background:rgba(5,20,20,0.88);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:16px;
+  text-align:center;
+  pointer-events:auto;
+}
+#overlay h1 { font-size:42px; color:#4af; text-shadow:0 0 20px #4af; }
+#overlay p { font-size:22px; max-width:480px; }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div id="left-ui">
+    <div>Score: <span id="score">0</span></div>
+    <div>Combo: <span id="combo">x1</span></div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      Pen Health:
+      <div id="health-bar"><div id="health-fill"></div></div>
+    </div>
+    <div>Fish Saved: <span id="saved">0</span></div>
+  </div>
+  <button id="metal-btn">METAL MODE</button>
+</div>
+<div id="overlay">
+  <h1>LICE LASER</h1>
+  <p>You're the Stingray robot.<br>Zap the sea lice. Spare the salmon.<br><br>Tap/click lice → AI check → laser.<br>Space or button for Metal Mode 🤘🐟</p>
+  <button id="restart-btn">START</button>
+</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let score = 0, combo = 1, health = 100, fishSaved = 0;
+let gameRunning = false, metalMode = false, time = 0;
+let salmon = [], particles = [], lasers = [], flashes = [];
+let lastSpawn = 0, spawnRate = 1200, difficulty = 1;
+let shake = 0, metalBeat = 0;
+
+const scoreEl = document.getElementById('score');
+const comboEl = document.getElementById('combo');
+const healthFill = document.getElementById('health-fill');
+const savedEl = document.getElementById('saved');
+const metalBtn = document.getElementById('metal-btn');
+const overlay = document.getElementById('overlay');
+const restartBtn = document.getElementById('restart-btn');
+
+function updateUI() {
+  scoreEl.textContent = score;
+  comboEl.textContent = 'x' + combo;
+  healthFill.style.width = Math.max(0, health) + '%';
+  savedEl.textContent = fishSaved;
+  metalBtn.classList.toggle('active', metalMode);
+}
+
+class Salmon {
+  constructor() {
+    this.y = 80 + Math.random() * (H - 160);
+    this.x = -120;
+    this.speed = 1.2 + Math.random() * 1.8 * difficulty;
+    this.size = 48 + Math.random() * 24;
+    this.hasLice = Math.random() < 0.55;
+    this.lice = this.hasLice ? {
+      ox: (Math.random() - 0.5) * 20,
+      oy: (Math.random() - 0.5) * 12,
+      size: 6 + Math.random() * 4
+    } : null;
+    this.wiggle = Math.random() * Math.PI * 2;
+    this.alive = true;
+    this.zapped = false;
+  }
+  update(dt) {
+    this.x += this.speed * dt * 0.06;
+    this.wiggle += dt * 0.008;
+    if (this.x > W + 150 && this.alive) {
+      this.alive = false;
+      if (this.hasLice && this.lice) {
+        health -= 4;
+      } else {
+        fishSaved++;
+      }
+    }
+  }
+  draw() {
+    const wiggleY = Math.sin(this.wiggle) * 4;
+    ctx.save();
+    ctx.translate(this.x, this.y + wiggleY);
+    ctx.fillStyle = '#c8d4dc';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, this.size * 0.7, this.size * 0.32, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#a8b8c0';
+    ctx.beginPath();
+    ctx.moveTo(-this.size * 0.5, 0);
+    ctx.lineTo(-this.size * 0.9, -this.size * 0.28);
+    ctx.lineTo(-this.size * 0.9, this.size * 0.28);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.arc(this.size * 0.35, -this.size * 0.05, 4, 0, Math.PI * 2);
+    ctx.fill();
+    if (this.lice && !this.zapped) {
+      ctx.fillStyle = '#ff6b9d';
+      ctx.beginPath();
+      ctx.arc(this.lice.ox, this.lice.oy, this.lice.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  contains(px, py) {
+    const dx = px - this.x, dy = py - this.y;
+    return (dx*dx)/(this.size*0.7*this.size*0.7) + (dy*dy)/(this.size*0.32*this.size*0.32) < 1.2;
+  }
+  liceHit(px, py) {
+    if (!this.lice || this.zapped) return false;
+    const lx = this.x + this.lice.ox, ly = this.y + this.lice.oy;
+    const dx = px - lx, dy = py - ly;
+    return dx*dx + dy*dy < (this.lice.size + 12) * (this.lice.size + 12);
+  }
+}
+
+class Particle {
+  constructor(x, y, color, vx, vy, life) {
+    this.x = x; this.y = y; this.color = color;
+    this.vx = vx; this.vy = vy; this.life = life; this.max = life;
+  }
+  update(dt) {
+    this.x += this.vx * dt * 0.06;
+    this.y += this.vy * dt * 0.06;
+    this.vy += 0.15;
+    this.life -= dt;
+  }
+  draw() {
+    ctx.globalAlpha = Math.max(0, this.life / this.max);
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+class Laser {
+  constructor(x1, y1, x2, y2, good) {
+    this.x1 = x1; this.y1 = y1; this.x2 = x2; this.y2 = y2;
+    this.life = 120; this.good = good;
+  }
+  update(dt) { this.life -= dt; }
+  draw() {
+    ctx.strokeStyle = this.good ? '#0f8' : '#f44';
+    ctx.lineWidth = 4;
+    ctx.shadowColor = this.good ? '#0f8' : '#f44';
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+  }
+}
+
+let audioCtx, metalGain;
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  metalGain = audioCtx.createGain();
+  metalGain.gain.value = 0.15;
+  metalGain.connect(audioCtx.destination);
+}
+let metalLoopId = null;
+function startMetal() {
+  if (!audioCtx) initAudio();
+  if (metalLoopId) return;
+  function schedule() {
+    if (!metalMode || !audioCtx) return;
+    const now = audioCtx.currentTime;
+    for (let i = 0; i < 8; i++) {
+      const t = now + i * 0.5;
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(140, t);
+      o.frequency.exponentialRampToValueAtTime(50, t + 0.12);
+      g.gain.setValueAtTime(0.9, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      o.connect(g); g.connect(metalGain);
+      o.start(t); o.stop(t + 0.2);
+    }
+    for (let i = 0; i < 4; i++) {
+      const t = now + 0.25 + i * 1.0;
+      const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.1, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let j = 0; j < d.length; j++) d[j] = (Math.random() * 2 - 1) * Math.exp(-j / (d.length * 0.3));
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.5, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      src.connect(g); g.connect(metalGain);
+      src.start(t);
+    }
+    const freqs = [82.4, 98, 110, 82.4, 73.4, 82.4, 98, 123.5];
+    freqs.forEach((f, i) => {
+      const t = now + i * 0.5;
+      const o = audioCtx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = f;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.22, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+      const dist = audioCtx.createWaveShaper();
+      const curve = new Float32Array(256);
+      for (let j = 0; j < 256; j++) {
+        const x = j / 128 - 1;
+        curve[j] = Math.tanh(x * 3.5);
+      }
+      dist.curve = curve;
+      o.connect(dist); dist.connect(g); g.connect(metalGain);
+      o.start(t); o.stop(t + 0.4);
+    });
+    metalLoopId = setTimeout(schedule, 4000);
+  }
+  schedule();
+}
+function stopMetal() {
+  metalMode = false;
+  if (metalLoopId) { clearTimeout(metalLoopId); metalLoopId = null; }
+}
+
+function spawnSalmon() {
+  salmon.push(new Salmon());
+}
+
+function fireLaser(x, y, skipCheck = false) {
+  if (!gameRunning) return;
+  let hitLice = null, hitFish = null;
+  for (let s of salmon) {
+    if (!s.alive) continue;
+    if (s.liceHit(x, y)) { hitLice = s; break; }
+    if (s.contains(x, y)) { hitFish = s; }
+  }
+  const target = hitLice || hitFish;
+  if (!target) {
+    health -= 1;
+    return;
+  }
+  flashes.push({ x: target.x, y: target.y, life: 300 });
+  setTimeout(() => {
+    if (!gameRunning) return;
+    if (hitLice && hitLice.alive && !hitLice.zapped) {
+      hitLice.zapped = true;
+      hitLice.lice = null;
+      score += 100 * combo;
+      combo = Math.min(combo + 1, 12);
+      fishSaved++;
+      for (let i = 0; i < 12; i++) {
+        particles.push(new Particle(hitLice.x, hitLice.y, '#ff6b9d', (Math.random()-0.5)*8, (Math.random()-0.5)*8, 400));
+      }
+      lasers.push(new Laser(W/2, H - 40, hitLice.x, hitLice.y, true));
+      if (metalMode) shake = 12;
+    } else if (hitFish) {
+      score = Math.max(0, score - 50);
+      combo = 1;
+      lasers.push(new Laser(W/2, H - 40, hitFish.x, hitFish.y, false));
+      for (let i = 0; i < 8; i++) {
+        particles.push(new Particle(hitFish.x, hitFish.y, '#aaf', (Math.random()-0.5)*6, (Math.random()-0.5)*6, 300));
+      }
+    }
+    updateUI();
+  }, skipCheck ? 40 : 280);
+}
+
+function gameLoop(ts) {
+  if (!gameRunning) return;
+  const dt = Math.min(32, ts - (gameLoop.last || ts));
+  gameLoop.last = ts;
+  time += dt;
+  difficulty = 1 + time / 40000;
+  spawnRate = Math.max(400, 1200 - time / 50);
+
+  if (time - lastSpawn > spawnRate) {
+    spawnSalmon();
+    lastSpawn = time;
+    if (Math.random() < 0.15 * difficulty) spawnSalmon();
+  }
+
+  salmon.forEach(s => s.update(dt));
+  salmon = salmon.filter(s => s.alive || s.x < W + 200);
+  particles.forEach(p => p.update(dt));
+  particles = particles.filter(p => p.life > 0);
+  lasers.forEach(l => l.update(dt));
+  lasers = lasers.filter(l => l.life > 0);
+  flashes = flashes.filter(f => (f.life -= dt) > 0);
+
+  if (health <= 0) {
+    endGame();
+    return;
+  }
+
+  ctx.fillStyle = '#0a2a2a';
+  ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(80,180,180,0.15)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += 40) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  if (Math.random() < 0.3) {
+    particles.push(new Particle(Math.random()*W, H, 'rgba(200,240,255,0.4)', (Math.random()-0.5)*1, -2 - Math.random()*2, 800));
+  }
+
+  if (shake > 0) {
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*shake, (Math.random()-0.5)*shake);
+    shake *= 0.85;
+  }
+
+  salmon.forEach(s => s.draw());
+  lasers.forEach(l => l.draw());
+  particles.forEach(p => p.draw());
+  flashes.forEach(f => {
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, 30 + (300-f.life)*0.2, 0, Math.PI*2);
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = '#2a4a4a';
+  ctx.fillRect(W/2 - 30, H - 50, 60, 40);
+  ctx.fillStyle = '#4af';
+  ctx.beginPath();
+  ctx.arc(W/2, H - 50, 12, 0, Math.PI*2);
+  ctx.fill();
+
+  if (shake > 0) ctx.restore();
+
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  score = 0; combo = 1; health = 100; fishSaved = 0;
+  salmon = []; particles = []; lasers = []; flashes = [];
+  time = 0; lastSpawn = 0; difficulty = 1; spawnRate = 1200;
+  gameRunning = true;
+  overlay.classList.add('hidden');
+  updateUI();
+  gameLoop.last = performance.now();
+  requestAnimationFrame(gameLoop);
+}
+
+function endGame() {
+  gameRunning = false;
+  stopMetal();
+  metalBtn.classList.remove('active');
+  overlay.innerHTML = `
+    <h1>GAME OVER</h1>
+    <p>You saved <strong>${fishSaved}</strong> salmon.<br>Final score: ${score}<br>Max combo: x${combo}</p>
+    <button id="share-btn">Share to X</button>
+    <button id="restart-btn">Play Again</button>
+  `;
+  overlay.classList.remove('hidden');
+  document.getElementById('restart-btn').onclick = startGame;
+  document.getElementById('share-btn').onclick = () => {
+    const text = `This looked like a music video so I turned it into a game. You're the Stingray robot, zap the lice, don't zap the salmon. Metal Mode included 🤘🐟\nSaved ${fishSaved} salmon | Score: ${score}\nPlay: ${location.href}`;
+    const url = 'https://x.com/intent/post?text=' + encodeURIComponent(text);
+    window.open(url, '_blank');
+  };
+}
+
+metalBtn.onclick = () => {
+  metalMode = !metalMode;
+  if (metalMode) {
+    initAudio();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    startMetal();
+  } else {
+    stopMetal();
+  }
+  updateUI();
+};
+
+restartBtn.onclick = startGame;
+
+canvas.addEventListener('pointerdown', e => {
+  if (!gameRunning) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (W / rect.width);
+  const y = (e.clientY - rect.top) * (H / rect.height);
+  fireLaser(x, y, e.detail === 2);
+});
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    metalBtn.click();
+  }
+});
+
+updateUI();
+</script>
+</body>
+</html>
